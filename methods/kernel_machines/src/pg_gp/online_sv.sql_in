@@ -281,6 +281,18 @@ CREATE TYPE MADLIB_SCHEMA.svm_model_rec AS (
        kernel_oid oid   -- OID of kernel function
 );
 
+-- The following is the structure to record the results of the linear SVM sgd algorithm
+--
+CREATE TYPE MADLIB_SCHEMA.lsvm_sgd_model_rec AS (
+       weights float8[],       -- the weight vector
+       wdiv float8,            -- scaling factor for the weights
+       wbias float8, 	       -- offset/bias of the linear model
+       ind_dim int,      -- the dimension of the individuals
+       inds int,         -- number of individuals processed 
+       cum_err int	 -- cumulative error
+);
+
+
 -- The following is the return type of a regression learning process
 --
 CREATE TYPE MADLIB_SCHEMA.svm_reg_result AS (
@@ -305,6 +317,16 @@ CREATE TYPE MADLIB_SCHEMA.svm_cls_result AS (
        nsvs int          -- number of support vectors
 );
 
+-- The following is the return type of a linear classifier learning process
+--
+CREATE TYPE MADLIB_SCHEMA.lsvm_sgd_result AS (
+       model_table text, -- table where the model is stored
+       inds int,         -- number of individuals processed 
+       cum_err float8,   -- cumulative error
+       div float8,       -- scaling factor for the weights
+       b float8          -- classifier offset
+);
+
 -- The following is the return type of a novelty detection learning process
 --
 CREATE TYPE MADLIB_SCHEMA.svm_nd_result AS (
@@ -318,6 +340,18 @@ CREATE TYPE MADLIB_SCHEMA.svm_nd_result AS (
 -- The type for representing support vectors
 --
 CREATE TYPE MADLIB_SCHEMA.svm_support_vector AS ( id text, weight float8, sv float8[] );
+
+
+/**
+ * @brief Data normalization function
+ *
+ * @param x The data point \f$ \boldsymbol x \f$
+ * @return Returns normalized data.
+ *      
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_normalization(x float8[]) RETURNS float8[]
+AS 'MODULE_PATHNAME', 'svm_normalization' LANGUAGE C IMMUTABLE STRICT;
+
 
 -- Kernel functions are a generalisation of inner products. 
 -- They provide the means by which we can extend linear machines to work in non-linear transformed feature spaces.
@@ -391,7 +425,7 @@ RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_cls_update' LANGU
 CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8, text, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_cls_update,
        stype = MADLIB_SCHEMA.svm_model_rec,
-       initcond = '(0,0,0,0,0,0,0,{},{},0)'
+       initcond = '(0,0,0,1,0,0,0,{},{},0)'
 );
 
 -- This is the main online support vector novelty detection algorithm. 
@@ -408,6 +442,21 @@ CREATE AGGREGATE MADLIB_SCHEMA.svm_nd_agg(float8[], text, float8, float8) (
        stype = MADLIB_SCHEMA.svm_model_rec,
        initcond = '(0,0,0,0,0,0,0,{},{},0)'
 );
+
+-- This is the SGD algorithm for linear SVMs. 
+-- The function updates the support vector model as it processes each new training example.
+-- This function is wrapped in an aggregate function to process all the training examples stored in a table.  
+--
+CREATE OR REPLACE FUNCTION 
+MADLIB_SCHEMA.lsvm_sgd_update(svs MADLIB_SCHEMA.lsvm_sgd_model_rec, ind FLOAT8[], label FLOAT8, eta FLOAT8, lambda FLOAT8)
+RETURNS MADLIB_SCHEMA.lsvm_sgd_model_rec AS 'MODULE_PATHNAME', 'lsvm_sgd_update' LANGUAGE C STRICT;   
+
+CREATE AGGREGATE MADLIB_SCHEMA.lsvm_sgd_agg(float8[], float8, float8, float8) (
+       sfunc = MADLIB_SCHEMA.lsvm_sgd_update,
+       stype = MADLIB_SCHEMA.lsvm_sgd_model_rec,
+       initcond = '({},1,0,0,0,0)'
+);
+
 
 -- This function stores a MADLIB_SCHEMA.svm_model_rec stored in model_temp_table into the model_table.
 --
@@ -745,4 +794,22 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_generate_nd_data(output_table text,
     plpy.execute("create table " + output_table + " ( id int, ind float8[] ) m4_ifdef(`GREENPLUM', `distributed by (id)')")
     plpy.execute("INSERT INTO " + output_table + " SELECT a.val, MADLIB_SCHEMA.__svm_random_ind2(" + str(dim) + ") FROM (SELECT generate_series(1," + str(num) + ") AS val) AS a")
 $$ LANGUAGE 'plpythonu';
+
+
+/**
+ * @brief Normalizes the data stored in a table, and save the normalized data in a new table. 
+ *
+ * @param input_table Name of table/view containing the data points to be scored
+ *
+ * @internal 
+ * @sa This function is a wrapper for online_sv::svm_normalization().
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_data_normalization(input_table TEXT) RETURNS VOID AS $$
+    output_table = input_table + "_scaled";
+    plpy.execute("DROP TABLE IF EXISTS " + output_table);
+    plpy.execute("CREATE TABLE " + output_table + " ( id bigint, ind float8[], label integer ) m4_ifdef(`GREENPLUM', `distributed by (id)')");
+    plpy.execute("INSERT INTO " + output_table + " SELECT id, MADLIB_SCHEMA.svm_normalization(ind), label FROM " + input_table);
+    plpy.info("output table: %s" % output_table)
+
+$$ LANGUAGE plpythonu;
 
