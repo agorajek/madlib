@@ -638,12 +638,12 @@ Datum svm_cls_update(PG_FUNCTION_ARGS)
 		supp_vecs_arr = addNewSV(supp_vecs_arr,ind,nsvs,ind_dim);
 		nsvs++;
 		b = b + eta * label;
-		// rho = rho - eta * (1 - nu);
+		rho = rho - eta * (1 - nu);
 		// update rho in log space
-		rho = rho * exp(-eta * rho * (1-nu));
+		//rho = rho * exp(-eta * rho * (1-nu));
 	} else {
-		// rho = rho + eta * nu; 
-		rho = rho * exp(eta * rho * nu);
+		rho = rho + eta * nu; 
+		//rho = rho * exp(eta * rho * nu);
 	}
 	
 	// Package up the attributes and return the resultant composite object

@@ -425,7 +425,7 @@ RETURNS MADLIB_SCHEMA.svm_model_rec AS 'MODULE_PATHNAME', 'svm_cls_update' LANGU
 CREATE AGGREGATE MADLIB_SCHEMA.svm_cls_agg(float8[], float8, text, float8, float8) (
        sfunc = MADLIB_SCHEMA.svm_cls_update,
        stype = MADLIB_SCHEMA.svm_model_rec,
-       initcond = '(0,0,0,1,0,0,0,{},{},0)'
+       initcond = '(0,0,0,0,0,0,0,{},{},0)'
 );
 
 -- This is the main online support vector novelty detection algorithm. 
@@ -800,16 +800,12 @@ $$ LANGUAGE 'plpythonu';
  * @brief Normalizes the data stored in a table, and save the normalized data in a new table. 
  *
  * @param input_table Name of table/view containing the data points to be scored
- *
- * @internal 
- * @sa This function is a wrapper for online_sv::svm_normalization().
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_data_normalization(input_table TEXT) RETURNS VOID AS $$
     output_table = input_table + "_scaled";
     plpy.execute("DROP TABLE IF EXISTS " + output_table);
-    plpy.execute("CREATE TABLE " + output_table + " ( id bigint, ind float8[], label integer ) m4_ifdef(`GREENPLUM', `distributed by (id)')");
+    plpy.execute("CREATE TABLE " + output_table + " ( id int, ind float8[], label int ) m4_ifdef(`GREENPLUM', `distributed by (id)')");
     plpy.execute("INSERT INTO " + output_table + " SELECT id, MADLIB_SCHEMA.svm_normalization(ind), label FROM " + input_table);
     plpy.info("output table: %s" % output_table)
-
 $$ LANGUAGE plpythonu;
 
